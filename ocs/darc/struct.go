@@ -117,3 +117,14 @@ type SignerX509EC struct {
 	Point  []byte
 	secret []byte
 }
+
+// Request is the structure that the client must provide to be verified
+type Request struct {
+	ID         Identity // for identifying the darc
+	Signatures [][]byte // we need multi signatures because expression
+	Action     []byte   // do we need this, also specific to the rule?
+	Msg        []byte   // what the request wants to do, application specific
+	Darcs      *[]*Darc // for offline verification
+	// fields below will be removed later
+	Role Role
+}

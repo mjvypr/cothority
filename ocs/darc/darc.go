@@ -260,6 +260,20 @@ func (d Darc) GetLatest() (*Darc, error) {
 	return prev, nil
 }
 
+// CheckRequest checks the given request and returns an error if it cannot be
+// accepted.
+func (d Darc) CheckRequest(r *Request) error {
+	if r.Signatures == nil || len(r.Signatures) == 0 {
+		return errors.New("no signature in request")
+	}
+	// TODO do we need to do a GetLatest?
+	if !r.ID.Equal(d.GetID()) {
+		return fmt.Errorf("identities are not equal, got %s but need %s", r.ID, d.GetID())
+	}
+	// TODO more verification
+	return nil
+}
+
 func (d Darc) String() string {
 	ret := fmt.Sprintf("this[base]: %x[%x]\nVersion: %d", d.GetID(), d.GetBaseID(), d.Version)
 	for idStr, list := range map[string]*[]*Identity{"owner": d.Owners, "user": d.Users} {

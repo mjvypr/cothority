@@ -145,6 +145,9 @@ func TestSignature(t *testing.T) {
 	// sig := sigEd.Sign
 }
 
+func TestRequest(t *testing.T) {
+}
+
 type testDarc struct {
 	darc    *Darc
 	owners  []*Signer
