@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/dedis/cothority"
 	"github.com/dedis/kyber"
@@ -27,8 +28,21 @@ import (
 	"github.com/dedis/protobuf"
 )
 
+const evolve = "_evolve"
+
+// InitRules initialise a set of rules with only the default action.
+func InitRules(owners []*Identity) Rules {
+	ids := make(string, len(owners))
+	for i, o := range owners {
+		ids[i] = o.String()
+	}
+	rs := make(Rules)
+	rs[evolve] = strings.Join(ids, " | ")
+	return rs
+}
+
 // NewDarc initialises a darc-structure given its owners and users
-func NewDarc(owners *[]*Identity, users *[]*Identity, desc []byte) *Darc {
+func NewDarc(rules Rules, desc []byte) *Darc {
 	var ow, us []*Identity
 	if owners != nil {
 		ow = append(ow, *owners...)
@@ -40,11 +54,10 @@ func NewDarc(owners *[]*Identity, users *[]*Identity, desc []byte) *Darc {
 		desc = []byte{}
 	}
 	return &Darc{
-		Owners:      &ow,
-		Users:       &us,
 		Version:     0,
 		Description: &desc,
 		Signature:   nil,
+		Rules:       rules,
 	}
 }
 
@@ -54,18 +67,15 @@ func (d *Darc) Copy() *Darc {
 		Version: d.Version,
 		BaseID:  d.BaseID,
 	}
-	if d.Owners != nil {
-		owners := append([]*Identity{}, *d.Owners...)
-		dCopy.Owners = &owners
-	}
-	if d.Users != nil {
-		users := append([]*Identity{}, *d.Users...)
-		dCopy.Users = &users
-	}
 	if d.Description != nil {
 		desc := *(d.Description)
 		dCopy.Description = &desc
 	}
+	newRules := make(Rules)
+	for k, v := range d.Rules {
+		newRules[k] = v
+	}
+	dCopy.Rules = newRules
 	return dCopy
 }
 
@@ -121,51 +131,33 @@ func (d *Darc) GetBaseID() ID {
 	return *d.BaseID
 }
 
-// AddUser adds a given user to the list of Users in the Darc
-// Use as 'Darc.AddUser(user)'
-func (d *Darc) AddUser(user *Identity) []*Identity {
-	var users []*Identity
-	if d.Users != nil {
-		users = *d.Users
+// TODO we need to make sure the user does not delete the evolve action
+
+// AddRule TODO
+func (d *Darc) AddRule(a Action, expr Expression) (Rules, error) {
+	if _, ok := d.Rules[a]; ok {
+		return d.Rules, errors.New("action already exists")
 	}
-	users = append(users, user)
-	d.Users = &users
-	return *d.Users
+	d.Rules[a] = Expression
+	return d.Rules, nil
 }
 
-// AddOwner adds a given user to the list of Users in the Darc
-// Use as 'Darc.AddUser(user)'
-func (d *Darc) AddOwner(owner *Identity) []*Identity {
-	var owners []*Identity
-	if d.Owners != nil {
-		owners = *d.Owners
+// UpdateRule TODO
+func (d *Darc) UpdateRule(a Action, expr Expression) (Rules, error) {
+	if _, ok := d.Rules[a]; !ok {
+		return d.Rules, errors.New("action does not exist")
 	}
-	owners = append(owners, owner)
-	d.Owners = &owners
-	return owners
+	d.Rules[a] = Expression
+	return d.Rules, nil
 }
 
-// RemoveUser removes s a given user from the list of Users in the Darc
-// Use as 'Darc.RemoveUser(user)'
-func (d *Darc) RemoveUser(user *Identity) ([]*Identity, error) {
-	var userIndex = -1
-	var users []*Identity
-	if d.Users == nil {
-		return nil, errors.New("users list of the darc is empty")
+// DeleteRules TODO
+func (d *Darc) DeleteRules(a Action) (Rules, error) {
+	if _, ok := d.Rules[a]; !ok {
+		return d.Rules, errors.New("action does not exist")
 	}
-	users = *d.Users
-	for i, u := range *d.Users {
-		if u.Equal(user) {
-			userIndex = i
-		}
-	}
-	if userIndex == -1 { // If initial index has not changed
-		return nil, errors.New("user cannot be removed because it is not in the darc")
-	}
-	// Actually removing the userIndexth element
-	users = append(users[:userIndex], users[userIndex+1:]...)
-	d.Users = &users
-	return *d.Users, nil
+	delete(d.Rules, a)
+	return d.Rules, nil
 }
 
 // SetEvolution evolves a darc, the latest valid darc needs to sign the new darc.
@@ -177,7 +169,7 @@ func (d *Darc) SetEvolution(prevd *Darc, pth *SignaturePath, prevOwner *Signer) 
 	d.Signature = nil
 	d.Version = prevd.Version + 1
 	if pth == nil {
-		pth = NewSignaturePath([]*Darc{prevd}, *prevOwner.Identity(), Owner)
+		pth = NewSignaturePath([]*Darc{prevd}, *prevOwner.Identity())
 	}
 	if prevd.BaseID == nil {
 		id := prevd.GetID()
@@ -207,7 +199,7 @@ func (d *Darc) SetEvolutionOnline(prevd *Darc, prevOwner *Signer) error {
 		id := prevd.GetID()
 		d.BaseID = &id
 	}
-	path := &SignaturePath{Signer: *prevOwner.Identity(), Role: Owner}
+	path := &SignaturePath{Signer: *prevOwner.Identity()}
 	sig, err := NewDarcSignature(d.GetID(), path, prevOwner)
 	if err != nil {
 		return errors.New("error creating a darc signature for evolution: " + err.Error())
@@ -335,11 +327,10 @@ func (ds *Signature) Verify(msg []byte, base *Darc) error {
 }
 
 // NewSignaturePath returns an initialized SignaturePath structure.
-func NewSignaturePath(darcs []*Darc, signer Identity, role Role) *SignaturePath {
+func NewSignaturePath(darcs []*Darc, signer Identity) *SignaturePath {
 	return &SignaturePath{
 		Darcs:  &darcs,
 		Signer: signer,
-		Role:   role,
 	}
 }
 
@@ -377,6 +368,12 @@ func (sigpath *SignaturePath) GetPathMsg() []byte {
 // Verify makes sure that the path is a correctly evolving one (each next
 // darc should be referenced by the previous one) and that the signer
 // is present in the last darc.
+//
+// TODO remove role - this function purely checks that the evolution is done
+// correctly. That is, starting with the newest darc, look at the previous
+// darc, check that the node that evolved the darc is actually allowed to make
+// the evolution, this is specified in the expression of the "_evolve" action.
+// Also check that the version number is decreasing.
 func (sigpath *SignaturePath) Verify(role Role) error {
 	if len(*sigpath.Darcs) == 0 {
 		return errors.New("no path stored")
@@ -538,11 +535,11 @@ func (id *Identity) Type() int {
 func (id *Identity) String() string {
 	switch id.Type() {
 	case 0:
-		return fmt.Sprintf("Darc: %x", id.Darc.ID)
+		return fmt.Sprintf("darc:%x", id.Darc.ID)
 	case 1:
-		return fmt.Sprintf("Ed25519: %s", id.Ed25519.Point.String())
+		return fmt.Sprintf("ed25519:%s", id.Ed25519.Point.String())
 	case 2:
-		return fmt.Sprintf("X509EC: %x", id.X509EC.Public)
+		return fmt.Sprintf("x509ec:%x", id.X509EC.Public)
 	default:
 		return fmt.Sprintf("No identity")
 	}

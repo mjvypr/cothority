@@ -39,21 +39,34 @@ const (
 // Darc is the basic structure representing an access control. A Darc can evolve in the way that
 // a new Darc points to the previous one and is signed by the owner(s) of the previous Darc.
 type Darc struct {
-	// Identities who are allowed to evolve this Darc.
-	Owners *[]*Identity
-	// Identities who can perform actions (write/read) with data on a skipchain.
-	Users *[]*Identity
-	// Version should be monotonically increasing over the evolution of a Darc.
+	/*
+		// Identities who are allowed to evolve this Darc.
+		Owners *[]*Identity
+		// Identities who can perform actions (write/read) with data on a skipchain.
+		Users *[]*Identity
+		// Version should be monotonically increasing over the evolution of a Darc.
+	*/
 	Version int
 	// Description is a free-form field that can hold any data as required by the user.
 	// Darc itself will never depend on any of the data in here.
 	Description *[]byte
 	// BaseID is the ID of the first darc of this Series
 	BaseID *ID
-	// Signature is calculated over the protobuf representation of [Owner, Users, Version, Description]
+	// Rules map an action to an expression.
+	Rules map[Action]Expression
+	// Signature is calculated over the protobuf representation of [Rules, Version, Description]
 	// and needs to be created by an Owner from the previous valid Darc.
 	Signature *Signature
 }
+
+// Action is TODO
+type Action string
+
+// Expression is TODO
+type Expression string
+
+// Rules are..
+type Rules map[Action]Expression
 
 // Identity is a generic structure can be either an Ed25519 public key or a Darc
 type Identity struct {
@@ -96,7 +109,8 @@ type SignaturePath struct {
 	// the Idenity (public key or another Darc) of the signer
 	Signer Identity
 	// Is the signer Owner of a Darc or an user
-	Role Role
+	// Role Role
+	// TODO what else do we need here?
 }
 
 // Signer is a generic structure that can hold different types of signers

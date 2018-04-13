@@ -39,7 +39,7 @@ Notation used are from https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Nau
 Examples:
 
 	id1 // every identifier evaluates to a boolean
-	(id1 & id2) | !(id3 & id4)
+	(id1 & id2) | (id3 & id4)
 
 The evaluation of expressions is performed against requests. The rule referring
 to the action in the request is used to check expression. In brief, the service
@@ -91,9 +91,6 @@ func InitParser(fn ValueCheckFn) parsec.Parser {
 
 	// (addop prod)*
 	var prodK = parsec.Kleene(nil, parsec.And(many2many, sumOp, &value), nil)
-
-	// (mulop value)*
-	// var valueK = parsec.Kleene(nil, parsec.And(many2many, prodOp, &value), nil)
 
 	// Circular rats come to life
 	// sum -> prod (addop prod)*
