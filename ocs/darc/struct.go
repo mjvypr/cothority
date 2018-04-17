@@ -1,6 +1,7 @@
 package darc
 
 import (
+	"github.com/dedis/cothority/ocs/darc/expression"
 	"github.com/dedis/kyber"
 	"github.com/dedis/onet/network"
 )
@@ -46,14 +47,14 @@ type Darc struct {
 		Users *[]*Identity
 		// Version should be monotonically increasing over the evolution of a Darc.
 	*/
-	Version int
+	Version uint64
 	// Description is a free-form field that can hold any data as required by the user.
 	// Darc itself will never depend on any of the data in here.
 	Description *[]byte
 	// BaseID is the ID of the first darc of this Series
 	BaseID *ID
 	// Rules map an action to an expression.
-	Rules map[Action]Expression
+	Rules Rules
 	// Signature is calculated over the protobuf representation of [Rules, Version, Description]
 	// and needs to be created by an Owner from the previous valid Darc.
 	Signature *Signature
@@ -62,11 +63,8 @@ type Darc struct {
 // Action is TODO
 type Action string
 
-// Expression is TODO
-type Expression string
-
 // Rules are..
-type Rules map[Action]Expression
+type Rules map[Action]expression.Expr
 
 // Identity is a generic structure can be either an Ed25519 public key or a Darc
 type Identity struct {

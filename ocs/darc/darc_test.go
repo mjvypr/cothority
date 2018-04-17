@@ -3,72 +3,79 @@ package darc
 import (
 	"testing"
 
-	"github.com/dedis/onet/log"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewDarc(t *testing.T) {
-	desc := []byte("mydarc")
-	var users, owner []*Identity
-	owner = append(owner, createIdentity())
-	for i := 0; i < 2; i++ {
-		users = append(users, createIdentity())
-	}
-	d := NewDarc(&owner, &users, desc)
-	require.Equal(t, &desc, d.Description)
-	require.Equal(t, *owner[0], *(*d.Owners)[0])
-	for i, user := range users {
-		require.Equal(t, *user, *(*d.Users)[i])
-	}
+func TestRules(t *testing.T) {
+	// one owner
+	owners := []*Identity{createIdentity()}
+	rules := InitRules(owners)
+	expr, ok := rules[evolve]
+	require.True(t, ok)
+	require.Equal(t, string(expr), owners[0].String())
+
+	// two owners
+	owners = append(owners, createIdentity())
+	rules = InitRules(owners)
+	expr, ok = rules[evolve]
+	require.True(t, ok)
+	require.Equal(t, string(expr), owners[0].String()+" | "+owners[1].String())
 }
 
-// Checks that when a Darc1 is copied to Darc2,
-// adding a user to Darc1 does not add it to Darc2,
-// and changing description and version in Darc1
-// does not change them in Darc2.
+func TestNewDarc(t *testing.T) {
+	desc := []byte("mydarc")
+	owners := []*Identity{createIdentity()}
+
+	d := NewDarc(InitRules(owners), desc)
+	require.Equal(t, &desc, d.Description)
+	require.Equal(t, string(d.GetEvolutionExpr()), owners[0].String())
+}
+
 func TestDarc_Copy(t *testing.T) {
-	d1 := createDarc("testdarc1").darc
+	// create two darcs
+	d1 := createDarc(1, "testdarc1").darc
+	err := d1.Rules.AddRule("ocs:write", d1.GetEvolutionExpr())
+	require.Nil(t, err)
 	d2 := d1.Copy()
-	(*d1.Owners)[0] = createIdentity()
-	d1.Version = 3
+
+	// modify the first one
+	d1.IncrementVersion()
 	desc := []byte("testdarc2")
 	d1.Description = &desc
-	d1.AddUser(createIdentity())
-	require.NotEqual(t, (*d1.Owners)[0], (*d2.Owners)[0])
-	require.NotEqual(t, len(*d1.Users), len(*d2.Users))
-	require.NotEqual(t, d1.Description, d2.Description)
-	require.NotEqual(t, d1.Version, d2.Version)
+	err = d1.Rules.UpdateRule("ocs:write", []byte(createIdentity().String()))
+	require.Nil(t, err)
 
-	d1.Description = nil
-	d2 = d1.Copy()
+	// the two darcs should be different
+	require.NotEqual(t, d1.Version, d2.Version)
+	require.NotEqual(t, d1.Description, d2.Description)
+	require.NotEqual(t, d1.Rules["ocs:write"], d2.Rules["ocs:write"])
+
+	// ID should not change if values are the same
+	d2.Description = nil
+	d1 = d2.Copy()
 	require.Equal(t, d1.GetID(), d2.GetID())
 }
 
-func TestDarc_AddUser(t *testing.T) {
-	d := createDarc("testdarc").darc
-	id := createIdentity()
-	d.AddUser(id)
-	require.Equal(t, id, (*d.Users)[len(*d.Users)-1])
+func TestAddRule(t *testing.T) {
+	// TODO
 }
 
-func TestDarc_RemoveUser(t *testing.T) {
-	d1 := createDarc("testdarc1").darc
-	d2 := d1.Copy()
-	id := createIdentity()
-	d2.AddUser(id)
-	require.NotEqual(t, len(*d1.Users), len(*d2.Users))
-	d2.RemoveUser(id)
-	require.Equal(t, len(*d1.Users), len(*d2.Users))
+func TestUpdateRule(t *testing.T) {
+	// TODO
+}
+
+func TestDeleteRule(t *testing.T) {
+	// TODO
 }
 
 func TestDarc_IncrementVersion(t *testing.T) {
-	d := createDarc("testdarc").darc
+	d := createDarc(1, "testdarc").darc
 	previousVersion := d.Version
 	d.IncrementVersion()
 	require.NotEqual(t, previousVersion, d.Version)
 }
 
+/*
 func TestDarc_SetEvolution(t *testing.T) {
 	d := createDarc("testdarc").darc
 	log.ErrFatal(d.Verify())
@@ -144,29 +151,23 @@ func TestSignature(t *testing.T) {
 	// sigEd := NewSignerEd25519(nil, nil)
 	// sig := sigEd.Sign
 }
-
-func TestRequest(t *testing.T) {
-}
+*/
 
 type testDarc struct {
 	darc    *Darc
 	owners  []*Signer
 	ownersI []*Identity
-	users   []*Signer
-	usersI  []*Identity
 }
 
-func createDarc(desc string) *testDarc {
+func createDarc(nbrOwners int, desc string) *testDarc {
 	td := &testDarc{}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < nbrOwners; i++ {
 		s, id := createSignerIdentity()
 		td.owners = append(td.owners, s)
 		td.ownersI = append(td.ownersI, id)
-		s, id = createSignerIdentity()
-		td.users = append(td.users, s)
-		td.usersI = append(td.usersI, id)
 	}
-	td.darc = NewDarc(&td.ownersI, &td.usersI, []byte(desc))
+	rules := InitRules(td.ownersI)
+	td.darc = NewDarc(rules, []byte(desc))
 	return td
 }
 

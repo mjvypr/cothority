@@ -2,6 +2,7 @@ package expression
 
 import (
 	"errors"
+	"strings"
 
 	parsec "github.com/prataprc/goparsec"
 )
@@ -20,11 +21,11 @@ specified by the application. Examples of the data structures are shown below.
 		Version int
 		Description *[]byte
 		BaseID *ID // ID of the first Darc
-		Rules map[string]Expression // key is the action, one rule per action, should we include a resource in Rules?
+		Rules map[string]Expr // key is the action, one rule per action, should we include a resource in Rules?
 		Signature *Signature // signature over the fields above
 	}
 
-	type Expression {
+	type Expr {
 		AST
 	}
 
@@ -70,6 +71,9 @@ const failedToCast = "evauluation failed - result is not bool"
 // ValueCheckFn TODO
 type ValueCheckFn func(string) bool
 
+// Expr TODO
+type Expr []byte
+
 // InitParser creates the root parser
 func InitParser(fn ValueCheckFn) parsec.Parser {
 	// Y is root Parser, usually called as `s` in CFG theory.
@@ -79,11 +83,11 @@ func InitParser(fn ValueCheckFn) parsec.Parser {
 	// Terminal rats
 	var openparan = parsec.Token(`\(`, "OPENPARAN")
 	var closeparan = parsec.Token(`\)`, "CLOSEPARAN")
-	var addop = parsec.Token(`\+`, "ADD")
-	var subop = parsec.Token(`-`, "SUB")
+	var addop = parsec.Token(`&`, "AND")
+	var subop = parsec.Token(`\|`, "OR")
 
 	// NonTerminal rats
-	// addop -> "+" |  "-"
+	// addop -> "&" |  "|"
 	var sumOp = parsec.OrdChoice(one2one, addop, subop)
 
 	// value -> "(" expr ")"
@@ -103,7 +107,7 @@ func InitParser(fn ValueCheckFn) parsec.Parser {
 }
 
 // ParseExpr TODO
-func ParseExpr(parser parsec.Parser, expr []byte) (bool, error) {
+func ParseExpr(parser parsec.Parser, expr Expr) (bool, error) {
 	v, s := parser(parsec.NewScanner(expr))
 	_, s = s.SkipWS()
 	if !s.Endof() {
@@ -114,6 +118,18 @@ func ParseExpr(parser parsec.Parser, expr []byte) (bool, error) {
 		return false, errors.New(failedToCast)
 	}
 	return vv, nil
+}
+
+// InitAndExpr creates an expression where & (and) is used to combine all the
+// IDs.
+func InitAndExpr(ids []string) Expr {
+	return Expr(strings.Join(ids, " & "))
+}
+
+// InitOrExpr creates an expression where | (or) is used to combine all the
+// IDs.
+func InitOrExpr(ids []string) Expr {
+	return Expr(strings.Join(ids, " | "))
 }
 
 func id() parsec.Parser {
@@ -132,9 +148,9 @@ func sumNode(fn ValueCheckFn) func(ns []parsec.ParsecNode) parsec.ParsecNode {
 				y := x.([]parsec.ParsecNode)
 				n := y[1].(bool)
 				switch y[0].(*parsec.Terminal).Name {
-				case "ADD":
+				case "AND":
 					val = val && n
-				case "SUB":
+				case "OR":
 					val = val || n
 				}
 			}

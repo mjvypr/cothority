@@ -16,7 +16,7 @@ func falseFn(s string) bool {
 
 func TestExprAllTrue(t *testing.T) {
 	Y := InitParser(trueFn)
-	s := parsec.NewScanner([]byte("a:abc + b:bb"))
+	s := parsec.NewScanner([]byte("a:abc & b:bb"))
 	v, s := Y(s)
 	if v.(bool) != true {
 		t.Fatalf("Mismatch value %v\n", v)
@@ -28,7 +28,7 @@ func TestExprAllTrue(t *testing.T) {
 
 func TestExprAllFalse(t *testing.T) {
 	Y := InitParser(falseFn)
-	s := parsec.NewScanner([]byte("a:abc + b:bb"))
+	s := parsec.NewScanner([]byte("a:abc & b:bb"))
 	v, s := Y(s)
 	if v.(bool) != false {
 		t.Fatalf("Mismatch value %v\n", v)
@@ -38,7 +38,15 @@ func TestExprAllFalse(t *testing.T) {
 	}
 }
 
-func TestPositive_One(t *testing.T) {
+func TestInitOr(t *testing.T) {
+	// TODO
+}
+
+func TestInitAnd(t *testing.T) {
+	// TODO
+}
+
+func TestParsing_One(t *testing.T) {
 	expr := []byte("a:abc")
 	fn := func(s string) bool {
 		if s == "a:abc" {
@@ -55,8 +63,8 @@ func TestPositive_One(t *testing.T) {
 	}
 }
 
-func TestPositive_Or(t *testing.T) {
-	expr := []byte("a:abc - b:abc - c:abc")
+func TestParsing_Or(t *testing.T) {
+	expr := []byte("a:abc | b:abc | c:abc")
 	fn := func(s string) bool {
 		if s == "b:abc" {
 			return true
@@ -72,7 +80,7 @@ func TestPositive_Or(t *testing.T) {
 	}
 }
 
-func TestParsing_InvalidID(t *testing.T) {
+func TestParsing_InvalidID_1(t *testing.T) {
 	expr := []byte("x")
 	_, err := ParseExpr(InitParser(trueFn), expr)
 	if err == nil {
@@ -80,6 +88,14 @@ func TestParsing_InvalidID(t *testing.T) {
 	}
 	if err.Error() != scannerNotEmpty {
 		t.Fatalf("wrong error message, got %s", err.Error())
+	}
+}
+
+func TestParsing_InvalidID_2(t *testing.T) {
+	expr := []byte("a: b")
+	_, err := ParseExpr(InitParser(trueFn), expr)
+	if err == nil {
+		t.Fatal("expect an error")
 	}
 }
 
@@ -106,7 +122,7 @@ func TestParsing_Paran(t *testing.T) {
 }
 
 func TestParsing_Nesting(t *testing.T) {
-	expr := []byte("(a:b - (b:c + c:d))")
+	expr := []byte("(a:b | (b:c & c:d))")
 	x, err := ParseExpr(InitParser(func(s string) bool {
 		if s == "b:c" || s == "c:d" {
 			return true
@@ -122,9 +138,33 @@ func TestParsing_Nesting(t *testing.T) {
 }
 
 func TestParsing_Imbalance(t *testing.T) {
-	expr := []byte("(a:b - b:c + c:d))")
+	expr := []byte("(a:b | b:c & c:d))")
 	_, err := ParseExpr(InitParser(trueFn), expr)
 	if err == nil {
 		t.Fatal("error is expected")
+	}
+}
+
+func TestParsing_LeftSpace(t *testing.T) {
+	expr := []byte(" a:b")
+	_, err := ParseExpr(InitParser(trueFn), expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParsing_RightSpace(t *testing.T) {
+	expr := []byte("a:b ")
+	_, err := ParseExpr(InitParser(trueFn), expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParsing_NoSpace(t *testing.T) {
+	expr := []byte("a:b|a:c&b:b")
+	_, err := ParseExpr(InitParser(trueFn), expr)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

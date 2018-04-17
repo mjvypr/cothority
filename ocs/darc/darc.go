@@ -15,16 +15,17 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/big"
-	"strings"
+	"sort"
 
 	"github.com/dedis/cothority"
+	"github.com/dedis/cothority/ocs/darc/expression"
 	"github.com/dedis/kyber"
 	"github.com/dedis/kyber/sign/schnorr"
 	"github.com/dedis/kyber/util/key"
-	"github.com/dedis/onet/log"
 	"github.com/dedis/protobuf"
 )
 
@@ -32,27 +33,17 @@ const evolve = "_evolve"
 
 // InitRules initialise a set of rules with only the default action.
 func InitRules(owners []*Identity) Rules {
-	ids := make(string, len(owners))
+	ids := make([]string, len(owners))
 	for i, o := range owners {
 		ids[i] = o.String()
 	}
 	rs := make(Rules)
-	rs[evolve] = strings.Join(ids, " | ")
+	rs[evolve] = expression.InitOrExpr(ids)
 	return rs
 }
 
 // NewDarc initialises a darc-structure given its owners and users
 func NewDarc(rules Rules, desc []byte) *Darc {
-	var ow, us []*Identity
-	if owners != nil {
-		ow = append(ow, *owners...)
-	}
-	if users != nil {
-		us = append(us, *users...)
-	}
-	if desc == nil {
-		desc = []byte{}
-	}
 	return &Darc{
 		Version:     0,
 		Description: &desc,
@@ -77,6 +68,11 @@ func (d *Darc) Copy() *Darc {
 	}
 	dCopy.Rules = newRules
 	return dCopy
+}
+
+// GetEvolutionExpr returns the expression that describes the evolution action.
+func (d Darc) GetEvolutionExpr() expression.Expr {
+	return d.Rules[evolve]
 }
 
 // Equal returns true if both darcs point to the same data.
@@ -104,22 +100,43 @@ func NewDarcFromProto(protoDarc []byte) *Darc {
 	return d
 }
 
-// GetID returns the hash of the protobuf-representation of the Darc as its Id.
-func (d *Darc) GetID() ID {
-	// get protobuf representation
-	protoDarc, err := d.ToProto()
-	if err != nil {
-		log.Error("couldn't convert darc to protobuf for computing its id: " + err.Error())
-		return nil
-	}
-	// compute the hash
+// GetID returns the hash of the protobuf-representation of the Darc as its Id:
+// H(ver + desc + baseID + {action + expr | rules} + H(sig)). The
+// rules
+// map is orderd by action.
+func (d Darc) GetID() ID {
 	h := sha256.New()
-	if _, err := h.Write(protoDarc); err != nil {
-		log.Error(err)
-		return nil
+	verBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(verBytes, d.Version)
+	h.Write(verBytes)
+	if d.Description != nil {
+		h.Write(*d.Description)
 	}
-	hash := h.Sum(nil)
-	return ID(hash)
+	if d.BaseID != nil {
+		h.Write(*d.BaseID)
+	}
+
+	actions := make([]string, len(d.Rules))
+	var i int
+	for k := range d.Rules {
+		actions[i] = string(k)
+		i++
+	}
+	sort.Strings(actions)
+	for _, a := range actions {
+		h.Write([]byte(a))
+		h.Write(d.Rules[Action(a)])
+	}
+
+	if d.Signature != nil {
+		sigHash, err := d.Signature.Hash()
+		if err != nil {
+			panic(err)
+		}
+		h.Write(sigHash)
+	}
+
+	return h.Sum(nil)
 }
 
 // GetBaseID returns the base ID or the ID of this darc if its the
@@ -134,42 +151,66 @@ func (d *Darc) GetBaseID() ID {
 // TODO we need to make sure the user does not delete the evolve action
 
 // AddRule TODO
-func (d *Darc) AddRule(a Action, expr Expression) (Rules, error) {
-	if _, ok := d.Rules[a]; ok {
-		return d.Rules, errors.New("action already exists")
+func (r Rules) AddRule(a Action, expr expression.Expr) error {
+	if _, ok := r[a]; ok {
+		return errors.New("action already exists")
 	}
-	d.Rules[a] = Expression
-	return d.Rules, nil
+	r[a] = expr
+	return nil
 }
 
 // UpdateRule TODO
-func (d *Darc) UpdateRule(a Action, expr Expression) (Rules, error) {
-	if _, ok := d.Rules[a]; !ok {
-		return d.Rules, errors.New("action does not exist")
+func (r Rules) UpdateRule(a Action, expr expression.Expr) error {
+	if isEvolution(a) {
+		return errors.New("cannot update evolution")
 	}
-	d.Rules[a] = Expression
-	return d.Rules, nil
+	return r.updateRule(a, expr)
 }
 
 // DeleteRules TODO
-func (d *Darc) DeleteRules(a Action) (Rules, error) {
-	if _, ok := d.Rules[a]; !ok {
-		return d.Rules, errors.New("action does not exist")
+func (r Rules) DeleteRules(a Action) error {
+	if isEvolution(a) {
+		return errors.New("cannot delete evolution")
 	}
-	delete(d.Rules, a)
-	return d.Rules, nil
+	if _, ok := r[a]; !ok {
+		return errors.New("action does not exist")
+	}
+	delete(r, a)
+	return nil
 }
 
-// SetEvolution evolves a darc, the latest valid darc needs to sign the new darc.
-// Only if one of the previous owners signs off on the new darc will it be
-// valid and accepted to sign on behalf of the old darc. The path can be nil
+// UpdateEvolution will update the "evolve" action, which allows identities
+// that satisfies the expression to evolve the Darc. Take extreme care when
+// using this function.
+func (r Rules) UpdateEvolution(expr expression.Expr) error {
+	return r.updateRule(evolve, expr)
+}
+
+func (r Rules) updateRule(a Action, expr expression.Expr) error {
+	if _, ok := r[a]; !ok {
+		return errors.New("action does not exist")
+	}
+	r[a] = expr
+	return nil
+}
+
+func isEvolution(action Action) bool {
+	if action == evolve {
+		return true
+	}
+	return false
+}
+
+// SetEvolution evolves a darc, the latest valid darc needs to sign the new
+// darc.  Only if one of the previous owners signs off on the new darc will it
+// be valid and accepted to sign on behalf of the old darc. The path can be nil
 // unless if the previousOwner is an SignerEd25519 and found directly in the
 // previous darc.
 func (d *Darc) SetEvolution(prevd *Darc, pth *SignaturePath, prevOwner *Signer) error {
 	d.Signature = nil
 	d.Version = prevd.Version + 1
 	if pth == nil {
-		pth = NewSignaturePath([]*Darc{prevd}, *prevOwner.Identity())
+		pth = &SignaturePath{Darcs: &[]*Darc{prevd}, Signer: *prevOwner.Identity()}
 	}
 	if prevd.BaseID == nil {
 		id := prevd.GetID()
@@ -230,7 +271,7 @@ func (d Darc) Verify() error {
 	if err != nil {
 		return err
 	}
-	if err := d.Signature.SignaturePath.Verify(Owner); err != nil {
+	if err := d.Signature.SignaturePath.Verify(); err != nil {
 		return err
 	}
 	return d.Signature.Verify(d.GetID(), latest)
@@ -240,6 +281,7 @@ func (d Darc) Verify() error {
 // error if it's not an evolving darc.
 func (d Darc) GetLatest() (*Darc, error) {
 	if d.Signature == nil {
+		// signature is nil if there are no evolution - nothing to sign
 		return nil, nil
 	}
 	if d.Signature.SignaturePath.Darcs == nil {
@@ -255,27 +297,30 @@ func (d Darc) GetLatest() (*Darc, error) {
 // CheckRequest checks the given request and returns an error if it cannot be
 // accepted.
 func (d Darc) CheckRequest(r *Request) error {
-	if r.Signatures == nil || len(r.Signatures) == 0 {
-		return errors.New("no signature in request")
-	}
-	// TODO do we need to do a GetLatest?
-	if !r.ID.Equal(d.GetID()) {
-		return fmt.Errorf("identities are not equal, got %s but need %s", r.ID, d.GetID())
-	}
-	// TODO more verification
+	/*
+		if r.Signatures == nil || len(r.Signatures) == 0 {
+			return errors.New("no signature in request")
+		}
+		// TODO do we need to do a GetLatest?
+		if !r.ID.Equal(d.GetID()) {
+			return fmt.Errorf("identities are not equal, got %s but need %s", r.ID, d.GetID())
+		}
+		// TODO more verification
+	*/
 	return nil
 }
 
 func (d Darc) String() string {
-	ret := fmt.Sprintf("this[base]: %x[%x]\nVersion: %d", d.GetID(), d.GetBaseID(), d.Version)
-	for idStr, list := range map[string]*[]*Identity{"owner": d.Owners, "user": d.Users} {
-		if list != nil {
-			for _, u := range *list {
-				ret += fmt.Sprintf("\n%s: %s", idStr, u.String())
-			}
-		}
+	s := fmt.Sprintf("this[base]: %x[%x]\nVersion: %d\nRules:", d.GetID(), d.GetBaseID(), d.Version)
+	for k, v := range d.Rules {
+		s += fmt.Sprintf("\n\t%s - \"%s\"", k, v)
 	}
-	return ret
+	sigStr := "nil"
+	if d.Signature != nil {
+		sigStr = "sig"
+	}
+	s += fmt.Sprintf("\nSignature: %s", sigStr)
+	return s
 }
 
 // IsNull returns true if this DarcID is not initialised.
@@ -295,7 +340,7 @@ func NewDarcSignature(msg []byte, sigpath *SignaturePath, signer *Signer) (*Sign
 	if sigpath == nil || signer == nil {
 		return nil, errors.New("signature path or signer are missing")
 	}
-	hash, err := sigpath.SigHash(msg)
+	hash, err := sigpath.HashWith(msg)
 	if err != nil {
 		return nil, err
 	}
@@ -319,23 +364,29 @@ func (ds *Signature) Verify(msg []byte, base *Darc) error {
 	if !sigBase.Equal(base.GetID()) {
 		return errors.New("Base-darc is not at root of path")
 	}
-	hash, err := ds.SignaturePath.SigHash(msg)
+	hash, err := ds.SignaturePath.HashWith(msg)
 	if err != nil {
 		return err
 	}
 	return ds.SignaturePath.Signer.Verify(hash, ds.Signature)
 }
 
-// NewSignaturePath returns an initialized SignaturePath structure.
-func NewSignaturePath(darcs []*Darc, signer Identity) *SignaturePath {
-	return &SignaturePath{
-		Darcs:  &darcs,
-		Signer: signer,
+// Hash computes the digest of the Signature struct.
+func (ds Signature) Hash() ([]byte, error) {
+	h := sha256.New()
+	_, err := h.Write(ds.Signature)
+	if err != nil {
+		return nil, err
 	}
+	_, err = h.Write(ds.SignaturePath.GetPathMsg())
+	if err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
 }
 
-// SigHash returns the hash needed to create or verify a DarcSignature.
-func (sigpath *SignaturePath) SigHash(msg []byte) ([]byte, error) {
+// HashWith returns the hash needed to create or verify a DarcSignature.
+func (sigpath *SignaturePath) HashWith(msg []byte) ([]byte, error) {
 	h := sha256.New()
 	msgpath := sigpath.GetPathMsg()
 	_, err := h.Write(msgpath)
@@ -365,84 +416,65 @@ func (sigpath *SignaturePath) GetPathMsg() []byte {
 	return path
 }
 
-// Verify makes sure that the path is a correctly evolving one (each next
-// darc should be referenced by the previous one) and that the signer
-// is present in the last darc.
-//
-// TODO remove role - this function purely checks that the evolution is done
-// correctly. That is, starting with the newest darc, look at the previous
-// darc, check that the node that evolved the darc is actually allowed to make
-// the evolution, this is specified in the expression of the "_evolve" action.
-// Also check that the version number is decreasing.
-func (sigpath *SignaturePath) Verify(role Role) error {
+// Verify makes sure that the path is a correctly evolving one (each next darc
+// should be referenced by the previous one) and that the signer is present in
+// the latest darc.
+func (sigpath *SignaturePath) Verify() error {
 	if len(*sigpath.Darcs) == 0 {
 		return errors.New("no path stored")
 	}
-	var previous *Darc
-	for n, d := range *sigpath.Darcs {
+	var prev *Darc
+	// we loop from latest to earliest
+	for _, d := range *sigpath.Darcs {
 		if d == nil {
 			return errors.New("null pointer in path list")
 		}
-		if previous != nil {
-			// Check if its an evolving darc
-			latest, err := d.GetLatest()
-			if err != nil {
-				return errors.New("found incorrect darc in chain")
-			}
-			if latest != nil {
-				log.Lvlf2("Verifying evolution from %x", d.GetID())
-				if err := d.Verify(); err != nil {
-					return errors.New("not correct evolution of darcs in path: " + err.Error())
-				}
-			}
-			if latest == nil || bytes.Compare(latest.GetID(), previous.GetID()) != 0 {
-				// The darc link can only come from an owner of the first darc. Afterwards
-				// darc links have to be user-links.
-				found := false
-				if role == Owner && n == 1 {
-					if previous.Owners != nil {
-						for _, id := range *previous.Owners {
-							if id.Darc != nil && id.Darc.ID.Equal(d.GetID()) {
-								found = true
-								break
-							}
-						}
-					} else {
-						return errors.New("no owners defined in base darc")
-					}
-				} else {
-					if previous.Users != nil {
-						for _, id := range *previous.Users {
-							if id.Darc != nil && id.Darc.ID.Equal(d.GetID()) {
-								found = true
-								break
-							}
-						}
-					} else {
-						return errors.New("no users defined for user signature")
-					}
-				}
-				if !found {
-					return fmt.Errorf("didn't find valid darc-link in chain at position %d", n)
-				}
-			}
+		if prev == nil {
+			prev = d
+			continue
 		}
-		previous = d
+		latest, err := d.GetLatest()
+		if err != nil {
+			return err
+		}
+		// ?? what is this Latest and how can it be nil?
+		if latest != nil {
+			if err := d.Verify(); err != nil {
+				return err
+			}
+		} else {
+			signer := d.Signature.SignaturePath.Signer
+			if err := checkEvolutionPermission(&signer, prev.Rules[evolve]); err != nil {
+				return err
+			}
+			// TODO what do we verify here?
+			/*
+				if err := d.Signature.Verify(prev.Signature.SignaturePath.GetPathMsg(), d.GetBaseID()); err != nil {
+					return err
+				}
+			*/
+		}
+		prev = d
 	}
-	if role == User {
-		for _, id := range *previous.Users {
-			if sigpath.Signer.Equal(id) {
-				return nil
-			}
+	return nil
+}
+
+// checkEvolutionPermission
+func checkEvolutionPermission(id *Identity, expr expression.Expr) error {
+	Y := expression.InitParser(func(s string) bool {
+		if id.String() == s {
+			return true
 		}
-	} else {
-		for _, id := range *previous.Owners {
-			if sigpath.Signer.Equal(id) {
-				return nil
-			}
-		}
+		return false
+	})
+	res, err := expression.ParseExpr(Y, expr)
+	if err != nil {
+		return err
 	}
-	return errors.New("didn't find signer in last darc of path")
+	if res != true {
+		return errors.New("expression evaluated to false")
+	}
+	return nil
 }
 
 // Type returns an integer representing the type of key held in the signer.
@@ -531,17 +563,31 @@ func (id *Identity) Type() int {
 	return -1
 }
 
+// TypeString returns the string of the type of the identity.
+func (id *Identity) TypeString() string {
+	switch id.Type() {
+	case 0:
+		return "darc"
+	case 1:
+		return "ed25519"
+	case 2:
+		return "x509ec"
+	default:
+		return "No identity"
+	}
+}
+
 // String returns the string representation of the identity
 func (id *Identity) String() string {
 	switch id.Type() {
 	case 0:
-		return fmt.Sprintf("darc:%x", id.Darc.ID)
+		return fmt.Sprintf("%s:%x", id.TypeString(), id.Darc.ID)
 	case 1:
-		return fmt.Sprintf("ed25519:%s", id.Ed25519.Point.String())
+		return fmt.Sprintf("%s:%s", id.TypeString(), id.Ed25519.Point.String())
 	case 2:
-		return fmt.Sprintf("x509ec:%x", id.X509EC.Public)
+		return fmt.Sprintf("%s:%x", id.TypeString(), id.X509EC.Public)
 	default:
-		return fmt.Sprintf("No identity")
+		return "No identity"
 	}
 }
 
