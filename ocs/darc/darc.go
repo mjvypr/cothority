@@ -32,13 +32,15 @@ import (
 const evolve = "_evolve"
 
 // InitRules initialise a set of rules with only the default action.
+// TODO we need to support multi-signature sign-offs, i.e. we initialise a
+// custom expression where multiple signatures are required to evolve the darc.
 func InitRules(owners []*Identity) Rules {
 	ids := make([]string, len(owners))
 	for i, o := range owners {
 		ids[i] = o.String()
 	}
 	rs := make(Rules)
-	rs[evolve] = expression.InitOrExpr(ids)
+	rs[evolve] = expression.InitOrExpr(ids...)
 	return rs
 }
 
@@ -127,9 +129,7 @@ func (d *Darc) GetBaseID() ID {
 	return d.BaseID
 }
 
-// TODO we need to make sure the user does not delete the evolve action
-
-// AddRule TODO
+// AddRule adds a new action expression-pair, the action must not exist.
 func (r Rules) AddRule(a Action, expr expression.Expr) error {
 	if _, ok := r[a]; ok {
 		return errors.New("action already exists")
@@ -138,7 +138,8 @@ func (r Rules) AddRule(a Action, expr expression.Expr) error {
 	return nil
 }
 
-// UpdateRule TODO
+// UpdateRule updates an existing action-expression pair, it cannot be the
+// evolve action.
 func (r Rules) UpdateRule(a Action, expr expression.Expr) error {
 	if isEvolution(a) {
 		return errors.New("cannot update evolution")
@@ -146,7 +147,7 @@ func (r Rules) UpdateRule(a Action, expr expression.Expr) error {
 	return r.updateRule(a, expr)
 }
 
-// DeleteRules TODO
+// DeleteRules deletes an action, it cannot delete the evolve action.
 func (r Rules) DeleteRules(a Action) error {
 	if isEvolution(a) {
 		return errors.New("cannot delete evolution")
@@ -156,6 +157,12 @@ func (r Rules) DeleteRules(a Action) error {
 	}
 	delete(r, a)
 	return nil
+}
+
+// Contains checks if the action a is in the rules.
+func (r Rules) Contains(a Action) bool {
+	_, ok := r[a]
+	return ok
 }
 
 // GetEvolutionExpr returns the expression that describes the evolution action.
@@ -261,6 +268,7 @@ func (d Darc) Verify() error {
 		if err := verifyOneEvolution(dPath, prev); err != nil {
 			return fmt.Errorf("verification failed on index %d with error: %v", i, err)
 		}
+		prev = dPath
 	}
 
 	signer, err := d.GetSignerDarc()
@@ -286,7 +294,8 @@ func verifyOneEvolution(newDarc, prevDarc *Darc) error {
 
 	// check version
 	if newDarc.Version != prevDarc.Version+1 {
-		return errors.New("incorrect version")
+		return fmt.Errorf("incorrect version, new version should be %d but it is %d",
+			prevDarc.Version+1, newDarc.Version)
 	}
 
 	// signer has the permission
@@ -320,29 +329,53 @@ func (d Darc) GetSignerDarc() (*Darc, error) {
 // CheckRequest checks the given request and returns an error if it cannot be
 // accepted.
 func (d Darc) CheckRequest(r *Request) error {
-	/*
-		if r.Signatures == nil || len(r.Signatures) == 0 {
-			return errors.New("no signature in request")
+	if !d.GetID().Equal(r.ID) {
+		return fmt.Errorf("darc id mismatch")
+	}
+	if !d.Rules.Contains(r.Action) {
+		return fmt.Errorf("%v does not exist", r.Action)
+	}
+	digest, err := r.Hash()
+	if err != nil {
+		return err
+	}
+	for i, id := range r.Identities {
+		if err := id.Verify(digest, r.Signatures[i]); err != nil {
+			return err
 		}
-		// TODO do we need to do a GetLatest?
-		if !r.ID.Equal(d.GetID()) {
-			return fmt.Errorf("identities are not equal, got %s but need %s", r.ID, d.GetID())
-		}
-		// TODO more verification
-	*/
+	}
+	validIDs := r.GetIdentityStrings()
+	ok, err := expression.DefaultParser(validIDs, d.Rules[r.Action])
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("expression '%s' for the keys '%v' evaluated to false",
+			d.Rules[r.Action], validIDs)
+	}
 	return nil
 }
 
 func (d Darc) String() string {
-	s := fmt.Sprintf("this[base]: %x[%x]\nVersion: %d\nRules:", d.GetID(), d.GetBaseID(), d.Version)
+	s := fmt.Sprintf("ID:\t%x\nBase:\t%x\nVer:\t%d\nRules:", d.GetID(), d.GetBaseID(), d.Version)
 	for k, v := range d.Rules {
 		s += fmt.Sprintf("\n\t%s - \"%s\"", k, v)
 	}
-	sigStr := "nil"
+	sigStr := "<nil>"
 	if d.Signature != nil {
-		sigStr = "sig"
+		sigStr = fmt.Sprintf("%x", d.Signature.Signature)
 	}
 	s += fmt.Sprintf("\nSignature: %s", sigStr)
+	signer, err := d.GetSignerDarc()
+	var signerStr string
+	if err != nil {
+		signerStr = "<" + err.Error() + ">"
+	} else if signer == nil {
+		signerStr = "<nil>"
+	} else {
+		signerStr = fmt.Sprintf("%x", signer.GetID())
+	}
+	s += fmt.Sprintf("\nSignerDarc: %s", signerStr)
 	return s
 }
 
@@ -379,7 +412,6 @@ func NewDarcSignature(signer *Signer, id ID, path []*Darc) (*Signature, error) {
 		return nil, err
 	}
 	return &Signature{Signature: sig, Signer: *signer.Identity(), Path: path}, nil
-
 }
 
 // Verify returns nil if the signature is correct, or an error
@@ -399,7 +431,6 @@ func (s *Signature) verify(msg []byte, base ID) error {
 	if err != nil {
 		return err
 	}
-	// fmt.Printf("hash %x, sig %x\n", hash, s.Signature)
 	return s.Signer.Verify(hash, s.Signature)
 }
 
@@ -451,6 +482,8 @@ func checkEvolutionPermission(id *Identity, expr expression.Expr) error {
 // It is compatible with Identity.Type. For an empty signer, -1 is returned.
 func (s *Signer) Type() int {
 	switch {
+	case s.Darc != nil:
+		return 0
 	case s.Ed25519 != nil:
 		return 1
 	case s.X509EC != nil:
@@ -464,6 +497,8 @@ func (s *Signer) Type() int {
 // for the appropriate signer.
 func (s *Signer) Identity() *Identity {
 	switch s.Type() {
+	case 0:
+		return &Identity{Darc: &IdentityDarc{ID: *s.Darc}}
 	case 1:
 		return &Identity{Ed25519: &IdentityEd25519{Point: s.Ed25519.Point}}
 	case 2:
@@ -665,6 +700,57 @@ func NewSignerEd25519(point kyber.Point, secret kyber.Scalar) *Signer {
 // Sign creates a schnorr signautre on the message
 func (eds *SignerEd25519) Sign(msg []byte) ([]byte, error) {
 	return schnorr.Sign(cothority.Suite, eds.Secret, msg)
+}
+
+// Hash computes the digest of the request, the identities and signatures are
+// not included.
+func (r *Request) Hash() ([]byte, error) {
+	h := sha256.New()
+	if _, err := h.Write(r.ID); err != nil {
+		return nil, err
+	}
+	if _, err := h.Write([]byte(r.Action)); err != nil {
+		return nil, err
+	}
+	if _, err := h.Write(r.Msg); err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
+}
+
+// GetIdentityStrings returns a slice of identity strings, this is useful for
+// creating a parser.
+func (r *Request) GetIdentityStrings() []string {
+	res := make([]string, len(r.Identities))
+	for i, id := range r.Identities {
+		res[i] = id.String()
+	}
+	return res
+}
+
+// NewRequest creates a new request which can be verified by a Darc.
+func NewRequest(darcID ID, action Action, msg []byte, signers ...*Signer) (*Request, error) {
+	r := Request{
+		ID:     darcID,
+		Action: action,
+		Msg:    msg,
+	}
+
+	digest, err := r.Hash()
+	if err != nil {
+		return nil, err
+	}
+
+	r.Signatures = make([][]byte, len(signers))
+	r.Identities = make([]*Identity, len(signers))
+	for i, signer := range signers {
+		r.Identities[i] = signer.Identity()
+		r.Signatures[i], err = signer.Sign(digest)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &r, nil
 }
 
 // NewSignerX509EC creates a new SignerX509EC - mostly for tests

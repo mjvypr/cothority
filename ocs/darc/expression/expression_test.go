@@ -176,3 +176,34 @@ func TestParsing_RealIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParsing_Empty(t *testing.T) {
+	expr := []byte{}
+	_, err := ParseExpr(InitParser(trueFn), expr)
+	if err == nil {
+		t.Fatal("empty expr should fail")
+	}
+}
+
+func TestEval_DefaultParser(t *testing.T) {
+	keys := []string{"a:a", "b:b", "c:c", "d:d"}
+	expr := InitAndExpr(keys...)
+	ok, err := DefaultParser(keys, expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok != true {
+		t.Fatal("evaluation should return to true")
+	}
+
+	// If the expression has an extra term, then the evaluation should fail
+	// because the extra term is not a part of the valid keys.
+	expr = append(expr, []byte(" & e:e")...)
+	ok, err = DefaultParser(keys, expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok != false {
+		t.Fatal("evaluation should return false")
+	}
+}

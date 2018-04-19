@@ -120,15 +120,28 @@ func ParseExpr(parser parsec.Parser, expr Expr) (bool, error) {
 	return vv, nil
 }
 
+// DefaultParser creates a parser and evaluates the expression expr, every id
+// in pks will evaluate to true.
+func DefaultParser(ids []string, expr Expr) (bool, error) {
+	return ParseExpr(InitParser(func(s string) bool {
+		for _, k := range ids {
+			if k == s {
+				return true
+			}
+		}
+		return false
+	}), expr)
+}
+
 // InitAndExpr creates an expression where & (and) is used to combine all the
 // IDs.
-func InitAndExpr(ids []string) Expr {
+func InitAndExpr(ids ...string) Expr {
 	return Expr(strings.Join(ids, " & "))
 }
 
 // InitOrExpr creates an expression where | (or) is used to combine all the
 // IDs.
-func InitOrExpr(ids []string) Expr {
+func InitOrExpr(ids ...string) Expr {
 	return Expr(strings.Join(ids, " | "))
 }
 

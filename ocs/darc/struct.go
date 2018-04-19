@@ -40,13 +40,7 @@ const (
 // Darc is the basic structure representing an access control. A Darc can evolve in the way that
 // a new Darc points to the previous one and is signed by the owner(s) of the previous Darc.
 type Darc struct {
-	/*
-		// Identities who are allowed to evolve this Darc.
-		Owners *[]*Identity
-		// Identities who can perform actions (write/read) with data on a skipchain.
-		Users *[]*Identity
-		// Version should be monotonically increasing over the evolution of a Darc.
-	*/
+	// Version should be monotonically increasing over the evolution of a Darc.
 	Version uint64
 	// Description is a free-form field that can hold any data as required by the user.
 	// Darc itself will never depend on any of the data in here.
@@ -86,8 +80,10 @@ type IdentityX509EC struct {
 	Public []byte
 }
 
-// IdentityDarc is a structure that points to a Darc with a given DarcID on a skipchain
+// IdentityDarc is a structure that points to a Darc with a given ID on a
+// skipchain. The signer should belong to the Darc.
 type IdentityDarc struct {
+	// Signer SignerEd25519
 	ID ID
 }
 
@@ -109,6 +105,7 @@ type Signature struct {
 type Signer struct {
 	Ed25519 *SignerEd25519
 	X509EC  *SignerX509EC
+	Darc    *ID
 }
 
 // SignerEd25519 holds a public and private keys necessary to sign Darcs
@@ -126,11 +123,9 @@ type SignerX509EC struct {
 
 // Request is the structure that the client must provide to be verified
 type Request struct {
-	ID         Identity // for identifying the darc
-	Signatures [][]byte // we need multi signatures because expression
-	Action     []byte   // do we need this, also specific to the rule?
-	Msg        []byte   // what the request wants to do, application specific
-	Darcs      *[]*Darc // for offline verification
-	// fields below will be removed later
-	Role Role
+	ID         ID          // for identifying the darc
+	Action     Action      // do we need this, also specific to the rule?
+	Msg        []byte      // what the request wants to do, application specific
+	Identities []*Identity //
+	Signatures [][]byte    // we need multi signatures because expression, for every identity
 }
