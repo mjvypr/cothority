@@ -3,6 +3,8 @@ package darc
 import (
 	"testing"
 
+	"github.com/dedis/cothority/ocs/darc/expression"
+	"github.com/dedis/onet/log"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,13 +30,13 @@ func TestNewDarc(t *testing.T) {
 
 	d := NewDarc(InitRules(owners), desc)
 	require.Equal(t, &desc, d.Description)
-	require.Equal(t, string(d.GetEvolutionExpr()), owners[0].String())
+	require.Equal(t, string(d.Rules.GetEvolutionExpr()), owners[0].String())
 }
 
 func TestDarc_Copy(t *testing.T) {
 	// create two darcs
 	d1 := createDarc(1, "testdarc1").darc
-	err := d1.Rules.AddRule("ocs:write", d1.GetEvolutionExpr())
+	err := d1.Rules.AddRule("ocs:write", d1.Rules.GetEvolutionExpr())
 	require.Nil(t, err)
 	d2 := d1.Copy()
 
@@ -75,29 +77,47 @@ func TestDarc_IncrementVersion(t *testing.T) {
 	require.NotEqual(t, previousVersion, d.Version)
 }
 
-/*
-func TestDarc_SetEvolution(t *testing.T) {
-	d := createDarc("testdarc").darc
+// TestDarc_SetEvolution creates two darcs, the first has two owners and the
+// second has one. The first darc is to be evolved into the second one.
+func TestDarc_SetEvolutionOne(t *testing.T) {
+	d := createDarc(2, "testdarc").darc
 	log.ErrFatal(d.Verify())
-	owner := NewSignerEd25519(nil, nil)
+	owner1 := NewSignerEd25519(nil, nil)
 	owner2 := NewSignerEd25519(nil, nil)
-	ownerI := owner.Identity()
-	ownerI2 := owner2.Identity()
-	d.AddOwner(ownerI)
+	owner3 := NewSignerEd25519(nil, nil)
+	id1 := *owner1.Identity()
+	id2 := *owner2.Identity()
+	id3 := *owner3.Identity()
+	require.Nil(t, d.Rules.UpdateEvolution(expression.InitOrExpr([]string{id1.String(), id2.String()})))
+
 	dNew := d.Copy()
 	dNew.IncrementVersion()
-	assert.NotNil(t, dNew.Verify())
+	require.Nil(t, dNew.Rules.UpdateEvolution([]byte(id1.String())))
+	// verification should fail because the signature path is not present
+	require.NotNil(t, dNew.Verify())
 
 	darcs := []*Darc{d}
-
-	require.Nil(t, dNew.SetEvolution(d, NewSignaturePath(darcs, *ownerI2, User), owner2))
-	assert.NotNil(t, dNew.Verify())
-	require.Nil(t, dNew.SetEvolution(d, NewSignaturePath(darcs, *ownerI, User), owner2))
-	assert.NotNil(t, dNew.Verify())
-	require.Nil(t, dNew.SetEvolution(d, NewSignaturePath(darcs, *ownerI, User), owner))
+	// the identity of the signer cannot be id3, it does not have the
+	// evolve permission
+	require.Nil(t, dNew.SetEvolution(d, &SignaturePath{&darcs, id3}, owner3))
+	require.NotNil(t, dNew.Verify())
+	//
+	require.Nil(t, dNew.SetEvolution(d, &SignaturePath{&darcs, id2}, owner2))
 	require.Nil(t, dNew.Verify())
+	//
+	require.Nil(t, dNew.SetEvolution(d, &SignaturePath{&darcs, id1}, owner1))
+	require.Nil(t, dNew.Verify())
+	/*
+		require.Nil(t, dNew.SetEvolution(d, NewSignaturePath(darcs, *ownerI2, User), owner2))
+		assert.NotNil(t, dNew.Verify())
+		require.Nil(t, dNew.SetEvolution(d, NewSignaturePath(darcs, *ownerI, User), owner2))
+		assert.NotNil(t, dNew.Verify())
+		require.Nil(t, dNew.SetEvolution(d, NewSignaturePath(darcs, *ownerI, User), owner))
+		require.Nil(t, dNew.Verify())
+	*/
 }
 
+/*
 func TestSignatureChange(t *testing.T) {
 	td1 := createDarc("testdarc")
 	td2 := createDarc("testdarc")

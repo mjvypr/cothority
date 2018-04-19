@@ -100,15 +100,15 @@ type Signature struct {
 	SignaturePath SignaturePath
 }
 
-// SignaturePath is a struct that holds information necessary for signature verification
+// SignaturePath is a struct that holds information necessary for signature
+// verification.
 type SignaturePath struct {
-	// Darc(s) that justify the right of the signer to push a new Darc
+	// Darc(s) that justify the right of the signer to push a new Darc.
+	// These are ordered from the oldest to the newest, i.e. Darcs[0]
+	// should be the base Darc.
 	Darcs *[]*Darc
-	// the Idenity (public key or another Darc) of the signer
+	// Signer is the Idenity (public key or another Darc) of the signer
 	Signer Identity
-	// Is the signer Owner of a Darc or an user
-	// Role Role
-	// TODO what else do we need here?
 }
 
 // Signer is a generic structure that can hold different types of signers

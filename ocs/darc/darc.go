@@ -70,11 +70,6 @@ func (d *Darc) Copy() *Darc {
 	return dCopy
 }
 
-// GetEvolutionExpr returns the expression that describes the evolution action.
-func (d Darc) GetEvolutionExpr() expression.Expr {
-	return d.Rules[evolve]
-}
-
 // Equal returns true if both darcs point to the same data.
 func (d *Darc) Equal(d2 *Darc) bool {
 	return d.GetID().Equal(d2.GetID())
@@ -128,13 +123,17 @@ func (d Darc) GetID() ID {
 		h.Write(d.Rules[Action(a)])
 	}
 
-	if d.Signature != nil {
-		sigHash, err := d.Signature.Hash()
-		if err != nil {
-			panic(err)
+	// TODO signature can not be a part of the ID because when we first
+	// create the darc it will not have a signature.
+	/*
+		if d.Signature != nil {
+			sigHash, err := d.Signature.Hash()
+			if err != nil {
+				panic(err)
+			}
+			h.Write(sigHash)
 		}
-		h.Write(sigHash)
-	}
+	*/
 
 	return h.Sum(nil)
 }
@@ -177,6 +176,11 @@ func (r Rules) DeleteRules(a Action) error {
 	}
 	delete(r, a)
 	return nil
+}
+
+// GetEvolutionExpr returns the expression that describes the evolution action.
+func (r Rules) GetEvolutionExpr() expression.Expr {
+	return r[evolve]
 }
 
 // UpdateEvolution will update the "evolve" action, which allows identities
@@ -262,19 +266,24 @@ func (d *Darc) IncrementVersion() {
 // if something is wrong.
 func (d Darc) Verify() error {
 	if d.Version == 0 {
+		// nothing to verify
 		return nil
 	}
 	if d.Signature == nil || len(d.Signature.Signature) == 0 {
 		return errors.New("No signature available")
 	}
-	latest, err := d.GetLatest()
-	if err != nil {
-		return err
-	}
+	/*
+		latest, err := d.GetLatest()
+		if err != nil {
+			return err
+		}
+	*/
+	fmt.Println("HERE1")
 	if err := d.Signature.SignaturePath.Verify(); err != nil {
 		return err
 	}
-	return d.Signature.Verify(d.GetID(), latest)
+	fmt.Println("HERE2", d.Signature.SignaturePath.GetPathMsg(), d.GetID())
+	return d.Signature.Verify(d.GetID(), d.GetBaseID())
 }
 
 // GetLatest searches for the previous darc in the signature and returns an
@@ -288,6 +297,24 @@ func (d Darc) GetLatest() (*Darc, error) {
 		return nil, errors.New("signature but no darcs")
 	}
 	prev := (*d.Signature.SignaturePath.Darcs)[0]
+	if prev.Version+1 != d.Version {
+		return nil, errors.New("not clean evolution - version mismatch")
+	}
+	return prev, nil
+}
+
+// GetSignerDarc returns the darc that signed this darc, which is the last
+// element in the signature path.
+func (d Darc) GetSignerDarc() (*Darc, error) {
+	if d.Signature == nil {
+		// signature is nil if there are no evolution - nothing to sign
+		return nil, nil
+	}
+	if d.Signature.SignaturePath.Darcs == nil {
+		return nil, errors.New("signature but no darcs")
+	}
+	n := len(*d.Signature.SignaturePath.Darcs)
+	prev := (*d.Signature.SignaturePath.Darcs)[n-1]
 	if prev.Version+1 != d.Version {
 		return nil, errors.New("not clean evolution - version mismatch")
 	}
@@ -340,6 +367,7 @@ func NewDarcSignature(msg []byte, sigpath *SignaturePath, signer *Signer) (*Sign
 	if sigpath == nil || signer == nil {
 		return nil, errors.New("signature path or signer are missing")
 	}
+	fmt.Println(sigpath.GetPathMsg(), msg)
 	hash, err := sigpath.HashWith(msg)
 	if err != nil {
 		return nil, err
@@ -353,7 +381,7 @@ func NewDarcSignature(msg []byte, sigpath *SignaturePath, signer *Signer) (*Sign
 
 // Verify returns nil if the signature is correct, or an error
 // if something is wrong.
-func (ds *Signature) Verify(msg []byte, base *Darc) error {
+func (ds *Signature) Verify(msg []byte, base ID) error {
 	if base == nil {
 		return errors.New("Base-darc is missing")
 	}
@@ -361,13 +389,14 @@ func (ds *Signature) Verify(msg []byte, base *Darc) error {
 		return errors.New("No path stored in signaturepath")
 	}
 	sigBase := (*ds.SignaturePath.Darcs)[0].GetID()
-	if !sigBase.Equal(base.GetID()) {
+	if !sigBase.Equal(base) {
 		return errors.New("Base-darc is not at root of path")
 	}
 	hash, err := ds.SignaturePath.HashWith(msg)
 	if err != nil {
 		return err
 	}
+	fmt.Printf("hash %x, sig %x\n", hash, ds.Signature)
 	return ds.SignaturePath.Signer.Verify(hash, ds.Signature)
 }
 
@@ -433,26 +462,32 @@ func (sigpath *SignaturePath) Verify() error {
 			prev = d
 			continue
 		}
-		latest, err := d.GetLatest()
-		if err != nil {
-			return err
-		}
-		// ?? what is this Latest and how can it be nil?
-		if latest != nil {
-			if err := d.Verify(); err != nil {
+		// TODO what does latest mean?
+		/*
+			latest, err := d.GetLatest()
+			if err != nil {
 				return err
 			}
-		} else {
-			signer := d.Signature.SignaturePath.Signer
-			if err := checkEvolutionPermission(&signer, prev.Rules[evolve]); err != nil {
-				return err
-			}
-			// TODO what do we verify here?
-			/*
+			if latest != nil {
+				if err := d.Verify(); err != nil {
+					return err
+				}
+			} else {
+				signer := d.Signature.SignaturePath.Signer
+				if err := checkEvolutionPermission(&signer, prev.Rules[evolve]); err != nil {
+					return err
+				}
 				if err := d.Signature.Verify(prev.Signature.SignaturePath.GetPathMsg(), d.GetBaseID()); err != nil {
 					return err
 				}
-			*/
+			}
+		*/
+		signer := d.Signature.SignaturePath.Signer
+		if err := checkEvolutionPermission(&signer, prev.Rules.GetEvolutionExpr()); err != nil {
+			return err
+		}
+		if err := d.Signature.Verify(prev.Signature.SignaturePath.GetPathMsg(), d.GetBaseID()); err != nil {
+			return err
 		}
 		prev = d
 	}
