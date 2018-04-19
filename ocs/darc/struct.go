@@ -50,9 +50,9 @@ type Darc struct {
 	Version uint64
 	// Description is a free-form field that can hold any data as required by the user.
 	// Darc itself will never depend on any of the data in here.
-	Description *[]byte
+	Description []byte
 	// BaseID is the ID of the first darc of this Series
-	BaseID *ID
+	BaseID ID
 	// Rules map an action to an expression.
 	Rules Rules
 	// Signature is calculated over the protobuf representation of [Rules, Version, Description]
@@ -96,19 +96,13 @@ type IdentityDarc struct {
 type Signature struct {
 	// The signature itself
 	Signature []byte
-	// Represents the path to get up to information to be able to verify this signature
-	SignaturePath SignaturePath
-}
-
-// SignaturePath is a struct that holds information necessary for signature
-// verification.
-type SignaturePath struct {
-	// Darc(s) that justify the right of the signer to push a new Darc.
-	// These are ordered from the oldest to the newest, i.e. Darcs[0]
-	// should be the base Darc.
-	Darcs *[]*Darc
 	// Signer is the Idenity (public key or another Darc) of the signer
 	Signer Identity
+	// Represents the path to get up to information to be able to verify
+	// this signature.  These justify the right of the signer to push a new
+	// Darc.  These are ordered from the oldest to the newest, i.e.
+	// Darcs[0] should be the base Darc.
+	Path []*Darc
 }
 
 // Signer is a generic structure that can hold different types of signers

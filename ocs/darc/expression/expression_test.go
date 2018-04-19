@@ -168,3 +168,11 @@ func TestParsing_NoSpace(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParsing_RealIDs(t *testing.T) {
+	expr := []byte("ed25519:5764e85642c3bda8748c5cf3d7f14c6d5c18e193228d70f4c58dd80ed4582748 | ed25519:bf58ca4b1ddb07a7a9bbf57fe9b856f214a38dd872b6ec07efbeb0a01003fae9")
+	_, err := ParseExpr(InitParser(trueFn), expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+}

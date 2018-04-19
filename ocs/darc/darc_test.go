@@ -29,7 +29,7 @@ func TestNewDarc(t *testing.T) {
 	owners := []*Identity{createIdentity()}
 
 	d := NewDarc(InitRules(owners), desc)
-	require.Equal(t, &desc, d.Description)
+	require.Equal(t, desc, d.Description)
 	require.Equal(t, string(d.Rules.GetEvolutionExpr()), owners[0].String())
 }
 
@@ -43,7 +43,7 @@ func TestDarc_Copy(t *testing.T) {
 	// modify the first one
 	d1.IncrementVersion()
 	desc := []byte("testdarc2")
-	d1.Description = &desc
+	d1.Description = desc
 	err = d1.Rules.UpdateRule("ocs:write", []byte(createIdentity().String()))
 	require.Nil(t, err)
 
@@ -87,7 +87,7 @@ func TestDarc_SetEvolutionOne(t *testing.T) {
 	owner3 := NewSignerEd25519(nil, nil)
 	id1 := *owner1.Identity()
 	id2 := *owner2.Identity()
-	id3 := *owner3.Identity()
+	// id3 := *owner3.Identity()
 	require.Nil(t, d.Rules.UpdateEvolution(expression.InitOrExpr([]string{id1.String(), id2.String()})))
 
 	dNew := d.Copy()
@@ -99,13 +99,13 @@ func TestDarc_SetEvolutionOne(t *testing.T) {
 	darcs := []*Darc{d}
 	// the identity of the signer cannot be id3, it does not have the
 	// evolve permission
-	require.Nil(t, dNew.SetEvolution(d, &SignaturePath{&darcs, id3}, owner3))
+	require.Nil(t, dNew.Evolve(darcs, owner3))
 	require.NotNil(t, dNew.Verify())
 	//
-	require.Nil(t, dNew.SetEvolution(d, &SignaturePath{&darcs, id2}, owner2))
+	require.Nil(t, dNew.Evolve(darcs, owner2))
 	require.Nil(t, dNew.Verify())
 	//
-	require.Nil(t, dNew.SetEvolution(d, &SignaturePath{&darcs, id1}, owner1))
+	require.Nil(t, dNew.Evolve(darcs, owner1))
 	require.Nil(t, dNew.Verify())
 	/*
 		require.Nil(t, dNew.SetEvolution(d, NewSignaturePath(darcs, *ownerI2, User), owner2))

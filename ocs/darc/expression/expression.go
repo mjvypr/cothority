@@ -135,7 +135,7 @@ func InitOrExpr(ids []string) Expr {
 func id() parsec.Parser {
 	return func(s parsec.Scanner) (parsec.ParsecNode, parsec.Scanner) {
 		_, s = s.SkipAny(`^[  \n\t]+`)
-		p := parsec.Token(`[a-z]+:[0-9a-f]+`, "ID")
+		p := parsec.Token(`[0-9a-z]+:[0-9a-f]+`, "ID")
 		return p(s)
 	}
 }
