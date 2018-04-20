@@ -68,6 +68,7 @@ type Identity struct {
 	Ed25519 *IdentityEd25519
 	// Public-key identity
 	X509EC *IdentityX509EC
+	// Add information re. where the identity is from?
 }
 
 // IdentityEd25519 holds a Ed25519 public key (Point)
@@ -105,7 +106,6 @@ type Signature struct {
 type Signer struct {
 	Ed25519 *SignerEd25519
 	X509EC  *SignerX509EC
-	Darc    *ID
 }
 
 // SignerEd25519 holds a public and private keys necessary to sign Darcs

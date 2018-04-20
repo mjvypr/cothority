@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strings"
 
 	"github.com/dedis/cothority"
 	"github.com/dedis/cothority/ocs/darc/expression"
@@ -120,9 +121,14 @@ func (d Darc) GetID() ID {
 	return h.Sum(nil)
 }
 
+// GetIdentityString returns the string representation of the ID.
+func (d Darc) GetIdentityString() string {
+	return NewIdentityDarc(d.GetID()).String()
+}
+
 // GetBaseID returns the base ID or the ID of this darc if its the
 // first darc.
-func (d *Darc) GetBaseID() ID {
+func (d Darc) GetBaseID() ID {
 	if d.Version == 0 {
 		return d.GetID()
 	}
@@ -250,7 +256,21 @@ func (d *Darc) IncrementVersion() {
 
 // Verify will check that the darc is correct, an error is returned if
 // something is wrong.
-func (d Darc) Verify() error {
+func (d *Darc) Verify() error {
+	return d.VerifyWithCB(func(s string) *Darc {
+		return nil
+	})
+}
+
+// VerifyWithCB will check that the darc is correct, an error is returned if
+// something is wrong.  The caller should supply the callback getDarc because
+// if one of the IDs in the expression is a Darc ID, then this function needs a
+// way to retrieve the correct Darc according to that ID. Note that getDarc is
+// responsible to return the newest Darc.
+func (d *Darc) VerifyWithCB(getDarc func(string) *Darc) error {
+	if d == nil {
+		return errors.New("darc is nil")
+	}
 	if d.Version == 0 {
 		return nil // nothing to verify on the genesis Darc
 	}
@@ -265,7 +285,7 @@ func (d Darc) Verify() error {
 			prev = dPath
 			continue
 		}
-		if err := verifyOneEvolution(dPath, prev); err != nil {
+		if err := verifyOneEvolution(dPath, prev, getDarc); err != nil {
 			return fmt.Errorf("verification failed on index %d with error: %v", i, err)
 		}
 		prev = dPath
@@ -275,37 +295,7 @@ func (d Darc) Verify() error {
 	if err != nil {
 		return err
 	}
-	return verifyOneEvolution(&d, signer)
-}
-
-// verifyOneEvolution verifies that one evolution is performed correctly. That
-// is, there should exist a signature in the newDarc that is signed by one of
-// the identities with the evolve permission in the oldDarc. The message is the
-// signature path specified in the newDarc, its ID and the base ID of the darc.
-// TODO we need to support multi-signature sign-offs.
-func verifyOneEvolution(newDarc, prevDarc *Darc) error {
-	// check base ID
-	if newDarc.BaseID == nil {
-		return errors.New("nil base ID")
-	}
-	if !newDarc.GetBaseID().Equal(prevDarc.GetBaseID()) {
-		return errors.New("base IDs are not equal")
-	}
-
-	// check version
-	if newDarc.Version != prevDarc.Version+1 {
-		return fmt.Errorf("incorrect version, new version should be %d but it is %d",
-			prevDarc.Version+1, newDarc.Version)
-	}
-
-	// signer has the permission
-	signer := newDarc.Signature.Signer
-	if err := checkEvolutionPermission(&signer, prevDarc.Rules.GetEvolutionExpr()); err != nil {
-		return err
-	}
-
-	// perform the verification
-	return newDarc.Signature.verify(newDarc.GetID(), prevDarc.GetBaseID())
+	return verifyOneEvolution(d, signer, getDarc)
 }
 
 // GetSignerDarc returns the darc that signed this darc, which is the last
@@ -345,7 +335,7 @@ func (d Darc) CheckRequest(r *Request) error {
 		}
 	}
 	validIDs := r.GetIdentityStrings()
-	ok, err := expression.DefaultParser(validIDs, d.Rules[r.Action])
+	ok, err := expression.DefaultParser(d.Rules[r.Action], validIDs...)
 	if err != nil {
 		return err
 	}
@@ -414,6 +404,21 @@ func NewDarcSignature(signer *Signer, id ID, path []*Darc) (*Signature, error) {
 	return &Signature{Signature: sig, Signer: *signer.Identity(), Path: path}, nil
 }
 
+// GetPathMsg returns the concatenated Darc-IDs of the path.
+func (s *Signature) GetPathMsg() []byte {
+	return darcsMsg(s.Path)
+}
+
+// PathContains checks whether the path contains the ID.
+func (s *Signature) PathContains(cb func(*Darc) bool) bool {
+	for _, d := range s.Path {
+		if cb(d) {
+			return true
+		}
+	}
+	return false
+}
+
 // Verify returns nil if the signature is correct, or an error
 // if something is wrong.
 func (s *Signature) verify(msg []byte, base ID) error {
@@ -444,11 +449,6 @@ func hashAll(msgs ...[]byte) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// GetPathMsg returns the concatenated Darc-IDs of the path.
-func (s *Signature) GetPathMsg() []byte {
-	return darcsMsg(s.Path)
-}
-
 func darcsMsg(darcs []*Darc) []byte {
 	if len(darcs) == 0 {
 		return []byte{}
@@ -460,11 +460,86 @@ func darcsMsg(darcs []*Darc) []byte {
 	return path
 }
 
-// checkEvolutionPermission
-func checkEvolutionPermission(id *Identity, expr expression.Expr) error {
+// verifyOneEvolution verifies that one evolution is performed correctly. That
+// is, there should exist a signature in the newDarc that is signed by one of
+// the identities with the evolve permission in the oldDarc. The message is the
+// signature path specified in the newDarc, its ID and the base ID of the darc.
+// TODO we need to support multi-signature sign-offs.
+func verifyOneEvolution(newDarc, prevDarc *Darc, getDarc func(string) *Darc) error {
+	// check base ID
+	if newDarc.BaseID == nil {
+		return errors.New("nil base ID")
+	}
+	if !newDarc.GetBaseID().Equal(prevDarc.GetBaseID()) {
+		return errors.New("base IDs are not equal")
+	}
+
+	// check version
+	if newDarc.Version != prevDarc.Version+1 {
+		return fmt.Errorf("incorrect version, new version should be %d but it is %d",
+			prevDarc.Version+1, newDarc.Version)
+	}
+
+	// check that signer has the permission
+	signer := newDarc.Signature.Signer.String()
+	if err := checkEvolutionPermission(prevDarc.Rules.GetEvolutionExpr(), getDarc, signer); err != nil {
+		return err
+	}
+
+	// perform the verification
+	return newDarc.Signature.verify(newDarc.GetID(), prevDarc.GetBaseID())
+}
+
+// checkEvolutionPermission checks whether the expression evaluates to true
+// given a list of identities.
+func checkEvolutionPermission(expr expression.Expr, getDarc func(string) *Darc, ids ...string) error {
 	Y := expression.InitParser(func(s string) bool {
-		if id.String() == s {
-			return true
+		if strings.HasPrefix(s, "darc") {
+			// getDarc is responsible for returning the latest Darc
+			// but the path should contain the darc ID s.
+			d := getDarc(s)
+			if d.Verify() != nil {
+				return false
+			}
+			if !d.Signature.PathContains(func(d *Darc) bool {
+				return d.GetIdentityString() == s
+			}) {
+				return false
+			}
+
+			// Try to evaluate the latest darc, it might not
+			// evaluate to true because the signer could be an
+			// older darc.
+			ok, err := expression.DefaultParser(d.Rules.GetEvolutionExpr(), ids...)
+			if err == nil && ok {
+				return true
+			}
+
+			// If the signer is not on the latest darc, then we
+			// look for older darcs in the Path of the latest darc.
+			// The searching mechanism starts from the base Darc,
+			// so we skip all the Darcs before the ID (s) that we
+			// are trying to evaluate.
+			var pathSearchStart bool
+			ok = d.Signature.PathContains(func(d *Darc) bool {
+				if d.GetIdentityString() == s {
+					pathSearchStart = true
+				}
+				if !pathSearchStart {
+					return false
+				}
+				ok, err := expression.DefaultParser(d.Rules.GetEvolutionExpr(), ids...)
+				if err != nil {
+					return false
+				}
+				return ok
+			})
+			return ok
+		}
+		for _, id := range ids {
+			if id == s {
+				return true
+			}
 		}
 		return false
 	})
@@ -473,7 +548,7 @@ func checkEvolutionPermission(id *Identity, expr expression.Expr) error {
 		return fmt.Errorf("evaluation failed on '%s' with error: %v", expr, err)
 	}
 	if res != true {
-		return errors.New("expression evaluated to false")
+		return fmt.Errorf("expression '%s' evaluated to false", expr)
 	}
 	return nil
 }
@@ -482,8 +557,6 @@ func checkEvolutionPermission(id *Identity, expr expression.Expr) error {
 // It is compatible with Identity.Type. For an empty signer, -1 is returned.
 func (s *Signer) Type() int {
 	switch {
-	case s.Darc != nil:
-		return 0
 	case s.Ed25519 != nil:
 		return 1
 	case s.X509EC != nil:
@@ -497,8 +570,6 @@ func (s *Signer) Type() int {
 // for the appropriate signer.
 func (s *Signer) Identity() *Identity {
 	switch s.Type() {
-	case 0:
-		return &Identity{Darc: &IdentityDarc{ID: *s.Darc}}
 	case 1:
 		return &Identity{Ed25519: &IdentityEd25519{Point: s.Ed25519.Point}}
 	case 2:

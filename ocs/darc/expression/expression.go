@@ -122,7 +122,7 @@ func ParseExpr(parser parsec.Parser, expr Expr) (bool, error) {
 
 // DefaultParser creates a parser and evaluates the expression expr, every id
 // in pks will evaluate to true.
-func DefaultParser(ids []string, expr Expr) (bool, error) {
+func DefaultParser(expr Expr, ids ...string) (bool, error) {
 	return ParseExpr(InitParser(func(s string) bool {
 		for _, k := range ids {
 			if k == s {

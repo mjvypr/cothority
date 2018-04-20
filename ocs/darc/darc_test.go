@@ -201,36 +201,51 @@ func TestDarc_Rules(t *testing.T) {
 	require.NotNil(t, d.CheckRequest(r))
 }
 
-// TODO test Darc identity
+// TestDarc_Delegation in this test we test delegation. We start with two
+// darcs, each has one evolution, i.e. d1 -> d2, d3 -> d4. Then, d2 adds d3 as
+// one of the identities with the evolve permission. Then, d4 should have the
+// permission to evolve d2 further.
+func TestDarc_Delegation(t *testing.T) {
+	td1 := createDarc(2, "testdarc1")
+	td2 := createDarc(2, "testdarc2")
+	td3 := createDarc(2, "testdarc3")
+	td4 := createDarc(2, "testdarc4")
+
+	require.Nil(t, td2.darc.Evolve([]*Darc{td1.darc}, td1.owners[0]))
+	require.Nil(t, td2.darc.Verify())
+
+	require.Nil(t, td4.darc.Evolve([]*Darc{td3.darc}, td3.owners[0]))
+	require.Nil(t, td4.darc.Verify())
+
+	id3 := NewIdentityDarc(td3.darc.GetID())
+	d2Expr := []byte(id3.String())
+	require.Nil(t, td2.darc.Rules.UpdateEvolution(d2Expr))
+	require.NotNil(t, td2.darc.Verify())
+	require.Nil(t, td2.darc.Evolve([]*Darc{td1.darc}, td1.owners[0]))
+	require.Nil(t, td2.darc.Verify())
+
+	td5 := createDarc(2, "testdarc5")
+	require.Nil(t, td5.darc.Evolve([]*Darc{td1.darc, td2.darc}, td3.owners[0]))
+	require.NotNil(t, td5.darc.Verify())
+	getDarc := func(id string) *Darc {
+		if id == td3.darc.GetIdentityString() {
+			return td4.darc
+		}
+		if id == td4.darc.GetIdentityString() {
+			return td4.darc
+		}
+		return nil
+	}
+	require.Nil(t, td5.darc.VerifyWithCB(getDarc))
+}
+
 // TODO test X509 identity
 // TODO test online verification
-/*
-func TestDarc_DarcIdentity(t *testing.T) {
-	d1 := createDarc(1, "testDarc1").darc
-	owner1 := NewSignerEd25519(nil, nil)
-	d1.Rules.UpdateEvolution([]byte(owner1.Identity().String()))
-	require.Nil(t, d1.Verify())
-
-	d2 := createDarc(1, "testDarc2").darc
-	idDarc := NewIdentityDarc(d1.GetID())
-	d2.Rules.UpdateEvolution([]byte(idDarc.String()))
-
-	path := []*Darc{d1}
-	require.Nil(t, d2.Evolve(path, owner1))
-	require.Nil(t, d2.Verify())
-
-	path = append(path, d2)
-	d3 := createDarc(1, "testDarc3").darc
-	require.Nil(t, d3.Rules.UpdateEvolution([]byte(NewIdentityDarc(d2.GetID()).String())))
-	require.Nil(t, d3.Evolve(path, NewIdentityDarc{d2.GetID()}))
-	require.NotNil(t, d3.Verify())
-}
-*/
 
 type testDarc struct {
-	darc    *Darc
-	owners  []*Signer
-	ownersI []*Identity
+	darc   *Darc
+	owners []*Signer
+	ids    []*Identity
 }
 
 func createDarc(nbrOwners int, desc string) *testDarc {
@@ -238,9 +253,9 @@ func createDarc(nbrOwners int, desc string) *testDarc {
 	for i := 0; i < nbrOwners; i++ {
 		s, id := createSignerIdentity()
 		td.owners = append(td.owners, s)
-		td.ownersI = append(td.ownersI, id)
+		td.ids = append(td.ids, id)
 	}
-	rules := InitRules(td.ownersI)
+	rules := InitRules(td.ids)
 	td.darc = NewDarc(rules, []byte(desc))
 	return td
 }

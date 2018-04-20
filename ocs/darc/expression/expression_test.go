@@ -188,7 +188,7 @@ func TestParsing_Empty(t *testing.T) {
 func TestEval_DefaultParser(t *testing.T) {
 	keys := []string{"a:a", "b:b", "c:c", "d:d"}
 	expr := InitAndExpr(keys...)
-	ok, err := DefaultParser(keys, expr)
+	ok, err := DefaultParser(expr, keys...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestEval_DefaultParser(t *testing.T) {
 	// If the expression has an extra term, then the evaluation should fail
 	// because the extra term is not a part of the valid keys.
 	expr = append(expr, []byte(" & e:e")...)
-	ok, err = DefaultParser(keys, expr)
+	ok, err = DefaultParser(expr, keys...)
 	if err != nil {
 		t.Fatal(err)
 	}
