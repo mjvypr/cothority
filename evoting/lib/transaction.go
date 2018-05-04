@@ -199,6 +199,17 @@ func (t *Transaction) Verify(genesis skipchain.SkipBlockID, s *skipchain.Service
 		if err != nil {
 			return err
 		}
+
+		db := s.GetDB()
+		b, err := db.GetLatest(db.GetByID(election.ID))
+		if err != nil {
+			return fmt.Errorf("GetLatest: %v")
+		}
+		err = s.SyncChain(election.Roster, b.Hash)
+		if err != nil {
+			return fmt.Errorf("SyncChain: %v")
+		}
+
 		err = schnorr.Verify(cothority.Suite, election.MasterKey, digest, t.Signature)
 		if err != nil {
 			return err

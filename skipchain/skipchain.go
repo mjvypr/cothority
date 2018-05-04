@@ -398,6 +398,26 @@ func (s *Service) GetUpdateChain(guc *GetUpdateChain) (*GetUpdateChainReply, err
 	return reply, nil
 }
 
+// Search the local DB starting at bl and finding the latest block we know.
+func (s *Service) findLatest(bl *SkipBlock) *SkipBlock {
+	for {
+		if len(bl.ForwardLink) == 0 {
+			return bl
+		}
+		next := bl.ForwardLink[len(bl.ForwardLink)-1].To
+		nextBl := s.db.GetByID(next)
+		if nextBl == nil {
+			return bl
+		}
+		bl = nextBl
+	}
+}
+
+// SyncChain is a wrapper to export syncChain for this hack. NOT FOR MASTER!
+func (s *Service) SyncChain(roster *onet.Roster, latest SkipBlockID) error {
+	return s.syncChain(roster, latest)
+}
+
 // syncChain communicates with conodes in the Roster via getBlocks
 // in order traverse the chain and save the blocks locally.
 func (s *Service) syncChain(roster *onet.Roster, latest SkipBlockID) error {
